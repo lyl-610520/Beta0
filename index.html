@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>SuperBeat - 打卡神器</title>
+  <link rel="manifest" href="/manifest.json">
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.5/gsap.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js"></script>
+  <style>
+    body { font-family: 'PingFang SC', sans-serif; overflow-x: hidden; }
+    .glass { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border-radius: 15px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1); }
+    .gradient-bg { transition: background 1s ease; }
+    .morning { background: linear-gradient(135deg, #f6d365, #fda085); }
+    .evening { background: linear-gradient(135deg, #667eea, #764ba2); }
+    .night { background: linear-gradient(135deg, #1e3c72, #2a5298); }
+    .hand-drawn-icon { filter: drop-shadow(2px 2px 2px rgba(0, 0, 0, 0.2)); }
+    .greeting-bubble { animation: float 3s ease-in-out infinite; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    .pet { transition: transform 0.5s; }
+    .flower { animation: sway 2s ease-in-out infinite; }
+    @keyframes sway { 0%, 100% { transform: rotate(5deg); } 50% { transform: rotate(-5deg); } }
+  </style>
+</head>
+<body id="app-body" class="gradient-bg morning">
+  <div id="root"></div>
+  <script type="module">
+    import React, { useState, useEffect } from 'https://esm.sh/react@18';
+    import ReactDOM from 'https://esm.sh/react-dom@18';
+
+    // Firebase Config (Replace with your Firebase project config)
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_AUTH_DOMAIN",
+      databaseURL: "YOUR_DATABASE_URL",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_STORAGE_BUCKET",
+      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // SVG Hand-Drawn Icons
+    const icons = {
+      sleep: `<svg width="40" height="40" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M50 20C35 20 25 30 25 50C25 70 35 80 50 80C65 80 75 70 75 50C75 30 65 20 50 20Z" fill="#FFD700" stroke="#333" stroke-width="5"/>
+        <path d="M30 40C35 35 45 35 50 40C55 35 65 35 70 40" fill="none" stroke="#333" stroke-width="5"/>
+      </svg>`,
+      work: `<svg width="40" height="40" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="20" y="30" width="60" height="40" rx="5" fill="#4CAF50" stroke="#333" stroke-width="5"/>
+        <rect x="30" y="40" width="40" height="20" fill="#FFF" stroke="#333" stroke-width="3"/>
+      </svg>`,
+      study: `<svg width="40" height="40" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 30L50 20L80 30V70L50 80L20 70V30Z" fill="#9C27B0" stroke="#333" stroke-width="5"/>
+        <path d="M50 20V80" stroke="#FFF" stroke-width="3"/>
+      </svg>`,
+      pet: `<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="40" r="20" fill="#FF8C00" stroke="#333" stroke-width="5"/>
+        <path d="M40 30L30 20L20 30" fill="none" stroke="#333" stroke-width="5"/>
+        <path d="M60 30L70 20L80 30" fill="none" stroke="#333" stroke-width="5"/>
+        <path d="M40 50C45 55 55 55 60 50" fill="none" stroke="#333" stroke-width="5"/>
+      </svg>`
+    };
+
+    // Main App Component
+    const App = () => {
+      const [page, setPage] = useState('home');
+      const [timeOfDay, setTimeOfDay] = useState('morning');
+      const [greeting, setGreeting] = useState('');
+      const [showIntro, setShowIntro] = useState(true);
+      const [theme, setTheme] = useState('light');
+      const [checkIns, setCheckIns] = useState({ sleep: false, work: false, study: false });
+      const [stars, setStars] = useState(0);
+      const [flowers, setFlowers] = useState([]); // [{id, stage: 0-2}]
+      const [petState, setPetState] = useState({ level: 0, outfit: 'default' });
+      const [gameActive, setGameActive] = useState(false);
+      const [gameScore, setGameScore] = useState(0);
+
+      // Firebase Sync
+      useEffect(() => {
+        const userRef = db.ref('users/guest');
+        userRef.on('value', (snapshot) => {
+          const data = snapshot.val() || {};
+          setStars(data.stars || 0);
+          setFlowers(data.flowers || []);
+          setPetState(data.pet || { level: 0, outfit: 'default' });
+        });
+        return () => userRef.off();
+      }, []);
+
+      // Realtime Background and Greeting
+      useEffect(() => {
+        const updateTime = () => {
+          const hour = new Date().getHours();
+          const body = document.getElementById('app-body');
+          let newGreeting = '';
+          if (hour >= 5 && hour < 12) {
+            body.className = 'gradient-bg morning';
+            setTimeOfDay('morning');
+            newGreeting = '早上好！今天要元气满满哦！';
+          } else if (hour >= 12 && hour < 18) {
+            body.className = 'gradient-bg evening';
+            setTimeOfDay('evening');
+            newGreeting = '下午好！继续保持动力！';
+          } else {
+            body.className = 'gradient-bg night';
+            setTimeOfDay('night');
+            newGreeting = '晚上好！是休息还是再拼一把？';
+          }
+          if (Math.random() < 0.2) setGreeting(newGreeting);
+        };
+        updateTime();
+        const interval = setInterval(updateTime, 60000);
+        return () => clearInterval(interval);
+      }, []);
+
+      // Opening Animation
+      useEffect(() => {
+        if (showIntro) {
+          gsap.fromTo('#intro-animation', { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 2, onComplete: () => setShowIntro(false) });
+        }
+      }, [showIntro]);
+
+      // Check-in with Stars and Flowers
+      const handleCheckIn = (type) => {
+        if (navigator.vibrate) navigator.vibrate(50);
+        setCheckIns({ ...checkIns, [type]: true });
+        gsap.to(`#${type}-card`, { scale: 1.1, duration: 0.2, yoyo: true, repeat: 1 });
+        if (!checkIns[type]) {
+          setStars(stars + 1);
+          db.ref('users/guest').update({ stars: stars + 1 });
+          if (Math.random() < 0.5) {
+            const newFlower = { id: Date.now(), stage: 0 };
+            setFlowers([...flowers, newFlower]);
+            db.ref('users/guest').update({ flowers: [...flowers, newFlower] });
+          }
+          gsap.to('#pet', { x: 20, rotation: 10, duration: 0.5, yoyo: true, repeat: 1 });
+          if (Math.random() < 0.3) setGameActive(true); // Trigger mini-game
+        } else {
+          gsap.to('#pet', { x: -20, rotation: -10, duration: 0.5, yoyo: true, repeat: 1 });
+        }
+      };
+
+      // Mini-Game Logic
+      const handleGameClick = () => {
+        setGameScore(gameScore + 1);
+        gsap.to('#game-target', { scale: 0.8, duration: 0.2, yoyo: true, repeat: 1 });
+        if (gameScore >= 4) {
+          setGameActive(false);
+          setStars(stars + 5);
+          db.ref('users/guest').update({ stars: stars + 5 });
+          setGameScore(0);
+        }
+      };
+
+      // Pet Outfit Change
+      const changePetOutfit = (outfit) => {
+        if (stars >= 10) {
+          setPetState({ ...petState, outfit });
+          db.ref('users/guest').update({ pet: { ...petState, outfit } });
+          setStars(stars - 10);
+          db.ref('users/guest').update({ stars: stars - 10 });
+        } else {
+          alert('需要10颗星星才能换装！');
+        }
+      };
+
+      // Flower Growth
+      const waterFlower = (id) => {
+        const newFlowers = flowers.map(f => f.id === id && f.stage < 2 ? { ...f, stage: f.stage + 1 } : f);
+        setFlowers(newFlowers);
+        db.ref('users/guest').update({ flowers: newFlowers });
+      };
+
+      // PWA Install Prompt
+      useEffect(() => {
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+          deferredPrompt = e;
+          setTimeout(() => {
+            if (deferredPrompt) {
+              alert('将SuperBeat添加到主屏幕，体验更佳！');
+              deferredPrompt.prompt();
+            }
+          }, 5000);
+        });
+      }, []);
+
+      // Render Pages
+      const renderPage = () => {
+        switch (page) {
+          case 'home':
+            return (
+              <div className="p-4">
+                {greeting && (
+                  <div className="greeting-bubble glass p-4 mb-4 text-center text-white">
+                    {greeting}
+                    <button className="ml-2 text-sm" onClick={() => setGreeting('')}>X</button>
+                  </div>
+                )}
+                <h1 className="text-3xl font-bold text-center mb-4">SuperBeat</h1>
+                <div className="grid grid-cols-1 gap-4">
+                  <div id="sleep-card" className="glass p-4 flex items-center">
+                    <div className="hand-drawn-icon mr-4" dangerouslySetInnerHTML={{ __html: icons.sleep }} />
+                    <div>
+                      <h2 className="text-xl">睡眠</h2>
+                      <p>{checkIns.sleep ? '已打卡！' : '点击打卡'}</p>
+                      <button className="mt-2 bg-blue-500 text-white px-4 py-2 rounded" onClick={() => handleCheckIn('sleep')}>
+                        打卡
+                      </button>
+                    </div>
+                  </div>
+                  <div id="work-card" className="glass p-4 flex items-center">
+                    <div className="hand-drawn-icon mr-4" dangerouslySetInnerHTML={{ __html: icons.work }} />
+                    <div>
+                      <h2 className="text-xl">工作</h2>
+                      <p>{checkIns.work ? '已打卡！' : '点击打卡'}</p>
+                      <button className="mt-2 bg-green-500 text-white px-4 py-2 rounded" onClick={() => handleCheckIn('work')}>
+                        打卡
+                      </button>
+                    </div>
+                  </div>
+                  <div id="study-card" className="glass p-4 flex items-center">
+                    <div className="hand-drawn-icon mr-4" dangerouslySetInnerHTML={{ __html: icons.study }} />
+                    <div>
+                      <h2 className="text-xl">学习</h2>
+                      <p>{checkIns.study ? '已打卡！' : '点击打卡'}</p>
+                      <button className="mt-2 bg-purple-500 text-white px-4 py-2 rounded" onClick={() => handleCheckIn('study')}>
+                        打卡
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div id="pet" className="pet mt-4 mx-auto" dangerouslySetInnerHTML={{ __html: icons.pet }} />
+              </div>
+            );
+          case 'achievements':
+            return (
+              <div className="p-4">
+                <h1 className="text-3xl font-bold text-center mb-4">成就</h1>
+                <div className="glass p-4 mb-4">
+                  <h2 className="text-xl mb-2">星星：{stars}</h2>
+                  <p>打卡收集星星，兑换奖励！</p>
+                </div>
+                <div className="glass p-4 mb-4">
+                  <h2 className="text-xl mb-2">花园</h2>
+                  <div className="flex flex-wrap">
+                    {flowers.map(flower => (
+                      <div key={flower.id} className="flower m-2">
+                        <img src={`https://via.placeholder.com/50?text=🌸${flower.stage}`} alt="Flower" />
+                        <button className="mt-2 bg-green-500 text-white px-2 py-1 rounded" onClick={() => waterFlower(flower.id)}>
+                          浇水
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="glass p-4">
+                  <h2 className="text-xl mb-2">宠物换装</h2>
+                  <div className="pet mx-auto" dangerouslySetInnerHTML={{ __html: icons.pet }} />
+                  <div className="flex mt-2">
+                    <button className="bg-blue-500 text-white px-4 py-2 rounded mr-2" onClick={() => changePetOutfit('space')}>
+                      太空装
+                    </button>
+                    <button className="bg-purple-500 text-white px-4 py-2 rounded" onClick={() => changePetOutfit('magic')}>
+                      魔法装
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          case 'game':
+            return (
+              <div className="p-4">
+                <h1 className="text-3xl font-bold text-center mb-4">迷你游戏</h1>
+                <div className="glass p-4">
+                  <h2 className="text-xl mb-2">点击星星：{gameScore}/5</h2>
+                  <div id="game-target" className="h-64 bg-gray-200 rounded-lg flex items-center justify-center" onClick={handleGameClick}>
+                    <img src="https://via.placeholder.com/80?text=⭐" className="hand-drawn-icon" alt="Star" />
+                  </div>
+                </div>
+              </div>
+            );
+          case 'settings':
+            return (
+              <div className="p-4">
+                <h1 className="text-3xl font-bold text-center mb-4">设置</h1>
+                <div className="glass p-4">
+                  <h2 className="text-xl mb-2">主题</h2>
+                  <select
+                    value={theme}
+                    onChange={(e) => setTheme(e.target.value)}
+                    className="w-full p-2 rounded bg-white text-black"
+                  >
+                    <option value="light">浅色</option>
+                    <option value="dark">深色</option>
+                  </select>
+                  <h2 className="text-xl mt-4 mb-2">通知</h2>
+                  <button className="bg-blue-500 text-white px-4 py-2 rounded">启用通知</button>
+                </div>
+              </div>
+            );
+          default:
+            return null;
+        }
+      };
+
+      return (
+        <div>
+          {showIntro && (
+            <div id="intro-animation" className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
+              <div className="glass p-8 text-center">
+                <div className="hand-drawn-icon mb-4" dangerouslySetInnerHTML={{ __html: icons.pet }} />
+                <h1 className="text-2xl text-white">欢迎体验SuperBeat！</h1>
+                <p className="text-white">开启你的习惯养成之旅！</p>
+              </div>
+            </div>
+          )}
+          {gameActive && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+              <div className="glass p-8">
+                <h2 className="text-xl mb-4">迷你游戏：点击5次星星！</h2>
+                <button className="bg-red-500 text-white px-4 py-2 rounded" onClick={() => setGameActive(false)}>
+                  退出
+                </button>
+              </div>
+            </div>
+          )}
+          {renderPage()}
+          <nav className="fixed bottom-0 w-full bg-gray-800 p-4 flex justify-around">
+            <button onClick={() => setPage('home')} className="text-white">主页</button>
+            <button onClick={() => setPage('achievements')} className="text-white">成就</button>
+            <button onClick={() => setPage('game')} className="text-white">游戏</button>
+            <button onClick={() => setPage('settings')} className="text-white">设置</button>
+          </nav>
+        </div>
+      );
+    };
+
+    // Render App
+    ReactDOM.render(<App />, document.getElementById('root'));
+
+    // Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then(() => console.log('Service Worker Registered'));
+    }
+  </script>
+</body>
+</html>
